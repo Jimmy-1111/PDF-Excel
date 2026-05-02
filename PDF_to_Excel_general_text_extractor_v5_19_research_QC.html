@@ -1,0 +1,1495 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>通用 PDF／新聞稿文字萃取工具 v5.19（研究用 QC 修正版）</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <style>
+    :root{
+      --bg:#f7f7f8;--card:#fff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+      --accent:#111827;--good:#0f766e;--warn:#b45309;--bad:#b91c1c;--blue:#1d4ed8;--purple:#6d28d9;
+    }
+    body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans TC","Microsoft JhengHei",sans-serif;background:var(--bg);color:var(--text);line-height:1.5}
+    header{max-width:1240px;margin:0 auto;padding:28px 32px 14px}
+    h1{margin:0 0 8px;font-size:27px;letter-spacing:-.02em}
+    .sub{color:var(--muted);max-width:1080px;font-size:15px}
+    main{max-width:1240px;margin:0 auto;padding:0 32px 42px}
+    .grid{display:grid;grid-template-columns:1.1fr .9fr;gap:18px}
+    @media(max-width:960px){.grid{grid-template-columns:1fr}}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:18px;box-shadow:0 6px 18px rgba(0,0,0,.04)}
+    h2{margin:0 0 12px;font-size:18px}
+    h3{margin:16px 0 8px;font-size:15px;color:#374151}
+    label{display:block;font-weight:700;margin-top:12px;margin-bottom:6px}
+    input,select,textarea{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:white;color:var(--text);font-size:14px}
+    textarea{min-height:72px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+    @media(max-width:760px){.row,.row3{grid-template-columns:1fr}}
+    .btns{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+    button{border:0;border-radius:999px;padding:11px 16px;background:var(--accent);color:white;cursor:pointer;font-weight:750;font-size:14px}
+    button.secondary{background:#e5e7eb;color:#111827}
+    button:disabled{opacity:.45;cursor:not-allowed}
+    .note{color:var(--muted);font-size:13px;margin-top:8px}
+    .status{white-space:pre-wrap;background:#111827;color:#f9fafb;border-radius:12px;padding:14px;min-height:280px;max-height:560px;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    th,td{border-bottom:1px solid var(--line);text-align:left;padding:9px 7px;vertical-align:top}
+    th{color:#374151;background:#f9fafb;position:sticky;top:0;z-index:2}
+    .preview{max-height:370px;overflow:auto;border:1px solid var(--line);border-radius:12px}
+    .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:750;white-space:nowrap}
+    .EXTRACTION_OK,.READY_FOR_ANALYSIS_CANDIDATE{background:#ccfbf1;color:#0f766e}
+    .EXTRACTION_OK_REVIEW_NEEDED,.READY_FOR_REVIEW{background:#dbeafe;color:#1d4ed8}
+    .TEXT_CLEANING_NEEDED,.NOISY_REVIEW_REQUIRED{background:#fef3c7;color:#b45309}
+    .REPROCESS_RECOMMENDED,.NOT_RECOMMENDED,.NO_TEXT_FOUND{background:#fee2e2;color:#b91c1c}
+    .main_text_candidate{background:#ccfbf1;color:#0f766e}.title,.metadata{background:#dbeafe;color:#1d4ed8}.noise,.ad_or_sponsored,.related_content,.footer,.navigation{background:#fee2e2;color:#b91c1c}.table_like,.short_fragment,.unknown{background:#fef3c7;color:#b45309}
+    code{background:#f3f4f6;padding:2px 5px;border-radius:6px}
+    details{margin-top:12px}
+    summary{cursor:pointer;font-weight:700;color:#374151}
+    .debug-box{background:#f0fdf4;border:1px solid #86efac;border-radius:12px;padding:14px;margin-top:4px;font-size:13px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;max-height:500px;overflow:auto;color:#14532d}
+    .debug-hidden{display:none}
+  </style>
+</head>
+<body>
+<header>
+  <h1>通用 PDF／新聞稿文字萃取工具 v5.19（研究用 QC 修正版）</h1>
+  <div class="sub">
+    v5.19 修正：沿用 v5.18 的段落與雜訊修正，進一步修正 Toyota Highlander 官方頁與 Chevrolet Malibu 2016 類頁面的主分析分類，並加強排除首頁導覽、COE/車價側欄、AVATR/California Fire Foundation 等混入雜訊。
+  </div>
+</header>
+
+<main>
+  <div class="grid">
+    <section class="card">
+      <h2>1. 上傳 PDF 與設定</h2>
+
+      <label>PDF 檔案</label>
+      <input id="pdfFiles" type="file" accept="application/pdf" multiple>
+
+      <div class="row3">
+        <div>
+          <label>文件模式</label>
+          <select id="docMode">
+            <option value="general" selected>通用 PDF：最大保留</option>
+            <option value="news">新聞稿／報導：強化正文候選與網頁雜訊標記</option>
+            <option value="list">清單／資料庫：保留欄位列，不積極合併</option>
+          </select>
+        </div>
+        <div>
+          <label>切分單位</label>
+          <select id="splitMode">
+            <option value="smart" selected>智慧段落：適合新聞、報告、文章</option>
+            <option value="paragraph">一般段落：較保守合併</option>
+            <option value="line">每行一列：最保守，不合併文字</option>
+          </select>
+        </div>
+        <div>
+          <label>短片段標記門檻：字元數低於</label>
+          <input id="shortChars" type="number" value="15" min="1" max="200">
+        </div>
+      </div>
+
+      <div class="row3">
+        <div>
+          <label>OCR 模式</label>
+          <select id="ocrMode">
+            <option value="auto" selected>自動：每頁抽不到文字才 OCR</option>
+            <option value="never">不使用 OCR</option>
+            <option value="always">全部頁面強制 OCR</option>
+          </select>
+        </div>
+        <div>
+          <label>自動 OCR 門檻：每頁字元數低於</label>
+          <input id="ocrThreshold" type="number" value="80" min="20" max="2000">
+        </div>
+        <div>
+          <label>OCR 解析度倍率</label>
+          <input id="ocrScale" type="number" value="1.75" min="1.0" max="4.0" step="0.25">
+        </div>
+      </div>
+
+      <div class="row3">
+        <div>
+          <label>OCR 語言</label>
+          <select id="ocrLang">
+            <option value="eng" selected>English only：eng</option>
+            <option value="eng+chi_tra">English + Traditional Chinese：eng+chi_tra</option>
+            <option value="eng+chi_sim">English + Simplified Chinese：eng+chi_sim</option>
+            <option value="eng+jpn">English + Japanese：eng+jpn</option>
+            <option value="eng+kor">English + Korean：eng+kor</option>
+          </select>
+        </div>
+        <div>
+          <label>段落目標長度：字元數約</label>
+          <input id="targetChars" type="number" value="450" min="80" max="2000">
+        </div>
+        <div>
+          <label>超長段落上限：字元數超過</label>
+          <input id="maxChars" type="number" value="1200" min="250" max="5000">
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label>輸出檔名</label>
+          <input id="outName" type="text" value="PDF_topic_model_input_v5_19_research_QC.xlsx">
+        </div>
+        <div>
+          <label>正文候選最小字元數</label>
+          <input id="mainMinChars" type="number" value="40" min="5" max="500">
+        </div>
+      </div>
+
+      <details open>
+        <summary>進階：新聞／網頁 PDF 標記規則</summary>
+
+        <label>硬分隔關鍵字：遇到後一定切開，不與正文合併</label>
+        <!-- NOTE v5.9: removed standalone "ad" – it caused false whole-word matches on legitimate text -->
+        <textarea id="hardBreakWords">advertisement,sponsored,related articles,recommended for you,trending stories,newsletter,about the author,start the conversation,comments,privacy policy,terms of use,sitemap,editorial policy,all rights reserved,powered by taboola,more releases from this source,latest alerts,clients,products & services,latest coe prices,you may also like,be notified on the latest news,more from general motors,contact us,share this article,sign in,subscribe,forum,forums,slideshow,affiliate programs,when you click on links,source status,source url,廣告,贊助,相關文章,延伸閱讀,推薦文章,熱門文章,訂閱,電子報,關於作者,留言,隱私權政策,使用條款,網站導覽,版權所有,聯絡我們,分享本文</textarea>
+
+        <label>疑似雜訊關鍵字：只標記，不刪除</label>
+        <!-- NOTE v5.9: removed standalone "ad" from here too -->
+        <textarea id="noiseWords">advertisement,sponsored,related articles,recommended for you,trending stories,newsletter,sign in,login,register,subscribe,privacy policy,privacy,cookie,terms of use,terms of service,disclaimer,contact us,follow us,share this article,comments,comment policy,all rights reserved,©,powered by taboola,request a demo,more releases,also from this source,client login,skip navigation,skip to content,customer assistance center,get in touch,about the author,editorial policy,sitemap,latest alerts,clients,products & services,latest coe prices,you may also like,be notified on the latest news,enter email address,more from general motors,used general motors,forum,forums,marketplace,new posts,tools,how-tos,gallery,site guidelines,search threads,slideshow,affiliate programs,when you click on links,source status,source url,follow sgcarmart,sgcarmart is the number one,廣告,相關文章,延伸閱讀,熱門文章,推薦文章,訂閱,電子報,留言,聯絡我們,分享本文,網站導覽,隱私權政策,隱私權,使用條款,服務條款,cookie,版權所有</textarea>
+
+        <label>metadata 關鍵字：日期、作者、來源、版次等</label>
+        <textarea id="metaWords">author,reporter,editor,source,published,publication date,press contact,media contact,source status,source url,source:,url:,contact:,contacts:,about chevrolet,about saturn,about general motors,about ford,about mercedes-benz,〔出版日期〕,〔報刊名〕,〔版次/版名〕,〔作者〕,〔報導地〕,〔主題類別〕,〔摘要〕,出版日期,報刊名,版次,作者,記者,報導地,主題類別,摘要,發布日期,發稿日期,新聞稿,資料來源</textarea>
+
+        <label>正文開始標記：只用來輔助標記，不直接刪除前文</label>
+        <textarea id="startMarkers">press release,news release,for immediate release,news provided by,release share,latest news,los angeles,new york,detroit,torrance,tokyo,taipei,報導,記者,新聞稿,發布,摘要</textarea>
+
+        <label>正文結束標記：之後內容通常標記為頁尾／推薦／雜訊</label>
+        <textarea id="endMarkers">about the author,start the conversation,recommended for you,trending stories,latest alerts,clients,products & services,latest coe prices,you may also like,be notified on the latest news,more from general motors,more from this source,more releases from this source,log in sign up,powered by terms,sort by best,what do you think,request a demo,contact pr newswire,about pr newswire,people who read this,tags:,contribute:,follow sgcarmart,sgcarmart is the number one,conversation comments,comments for this thread,關於作者,相關新聞,延伸閱讀,推薦文章,熱門文章,留言區</textarea>
+
+        <label>疑似表格／規格關鍵字：只標記，不刪除</label>
+        <textarea id="tableWords">table,exhibit,appendix,specification table,preliminary specifications,specifications:,specifications,dimensions:,gear ratios:,electric drive system,chassis/suspension,wheels / tires,engine specifications,powertrain specifications,technical specifications,表格,規格表,附錄</textarea>
+      </details>
+
+      <div class="btns">
+        <button id="runBtn">開始轉換</button>
+        <button id="downloadBtn" class="secondary" disabled>下載 Excel</button>
+        <button id="clearBtn" class="secondary">清除結果</button>
+      </div>
+      <div class="note">
+        建議：一般文章與新聞稿先用「新聞稿／報導＋智慧段落」。資料庫清單或欄位式 PDF 用「清單／資料庫＋每行一列」。掃描型中文 PDF 請選 OCR 語言 eng+chi_tra。
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>2. 處理狀態</h2>
+      <div id="status" class="status">尚未開始。輸出 Excel 預設包含 Topic_Model_Input、All_Extracted_Lines、Excluded_QC、Document_QC 四張 sheet。
+v5.15 修正清單：
+  [BUG-1] joinTopicLines 改用 clean_text（去除 raw noise 污染 blockRole 的根本原因）
+  [BUG-2] finalizeParagraphText 加入 stripInlineNoise 第二層清洗
+  [BUG-3] pageTextPDFJS 欄間距門檻 55→35，加入多欄偵測
+  [BUG-4] 移除 "ad" 短詞全詞匹配（誤殺 road/standard/additional 等正文）
+  [BUG-5] 加入 debug 預覽面板
+  [BUG-13] 弱 footer 不再過早截斷正文
+  [BUG-14] table_like 不再因 engine/interior/exterior 等普通詞誤刪正文
+  [BUG-15] v5.15: end marker 加入產品正文保護，避免將 hybrid model 後半段誤判為 footer
+  [BUG-16] v5.15: use_for_main_analysis 僅標記 official_press_release，media/unknown 改為 robustness 或 review
+  [BUG-17] v5.18: splitLongText 不再於未完成句中硬切，避免 bringing an / class-exclusive 等半句輸出
+  [BUG-18] v5.18: 新增 official_product_page 分類，官方產品頁可進主分析
+  [BUG-19] v5.18: makeBlocks 不再因 joined 內任一標點就提前斷段，避免 bringing an / class-exclusive 半句輸出
+  [BUG-20] v5.18: cleanForAnalysis 保護 2.5-liter、Nov. 19 等縮寫／小數點，降低錯誤句切分
+  [BUG-21] v5.18: stripInlineNoise 強化側欄新聞標題清除，例如 Tesla lithium / tire brand / dryer lint<br>
+  [BUG-22] v5.19: Toyota Highlander 2008–2019 官方頁全文分類為 official_product_page，2005 forum reprint 保留 robustness/review<br>
+  [BUG-23] v5.19: Chevrolet Malibu 2016 / 3BL Media 類官方產品頁分類放寬，並排除 More from GM、California Fire Foundation、AVATR 等側欄雜訊</div>
+    </section>
+  </div>
+
+  <section class="card" style="margin-top:18px;">
+    <h2>3. 文件層級 QC 預覽（僅畫面顯示，不輸出為 sheet）</h2>
+    <div class="preview">
+      <table id="docTable">
+        <thead>
+          <tr>
+            <th>PDF</th><th>頁數</th><th>Lines</th><th>Blocks</th><th>Main</th><th>OCR頁</th><th>雜訊比</th><th>抽取狀態</th><th>分析準備度</th><th>理由</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card" style="margin-top:18px;">
+    <h2>4. Topic_Model_Input 預覽：前 30 列</h2>
+    <div class="preview">
+      <table id="mainTable">
+        <thead>
+          <tr><th>PDF</th><th>頁</th><th>角色</th><th>字元</th><th>文字</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card" style="margin-top:18px;">
+    <h2>5. Debug 預覽（每份 PDF）</h2>
+    <div id="debugBox" class="debug-box debug-hidden">尚未處理任何 PDF。</div>
+  </section>
+</main>
+
+<script type="module">
+import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs";
+pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs";
+
+let workbookBlob=null;
+let allDocs=[], allLines=[], allBlocks=[], allMain=[], allStrictMain=[], allNoise=[], allMeta=[], allPageQC=[], allDocQC=[], allRules=[];
+let debugLines=[]; // debug preview lines collected across files
+
+const $=id=>document.getElementById(id);
+function log(m){$("status").textContent += "\n"+m; $("status").scrollTop=$("status").scrollHeight;}
+function esc(s){return String(s??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;");}
+function kw(v){return String(v||"").split(",").map(s=>s.trim().toLowerCase()).filter(Boolean);}
+function reset(){
+  workbookBlob=null; allDocs=[]; allLines=[]; allBlocks=[]; allMain=[]; allStrictMain=[]; allNoise=[];
+  allMeta=[]; allPageQC=[]; allDocQC=[]; allRules=[]; debugLines=[];
+  $("downloadBtn").disabled=true;
+  $("status").textContent="尚未開始。輸出 Excel 預設包含 Topic_Model_Input、All_Extracted_Lines、Excluded_QC、Document_QC 四張 sheet。\nv5.19 修正清單：\n  [BUG-1] joinTopicLines 改用 clean_text\n  [BUG-2] finalizeParagraphText 加入 stripInlineNoise\n  [BUG-3] 欄間距門檻 55→35，加入多欄偵測\n  [BUG-4] 移除 \"ad\" 短詞誤判\n  [BUG-5] debug 預覽面板\\n  [BUG-6] looksMetadataLine 門檻 80→40 + words≤5\\n  [BUG-7] pageTextPDFJS：x-spread 多欄偵測\\n  [BUG-8] looksTitle 最少 3 個詞\\n  [BUG-9] 撤銷 x-spread 多欄偵測（避免 Jalopnik 主文被誤棄）\\n  [BUG-10] isEligibleTopicLine: <= shortChars（修正 15 char 邊界）\\n  [BUG-11] pushCurrent 只剩 title/pre_main/footer（消除 noise 觸發 fragment）\\n  [BUG-12] 新增 Jalopnik/PRNewswire/GreenCarReports 結束標記\n  [BUG-17] splitLongText 不再於未完成句中硬切\n  [BUG-18] official_product_page 可進主分析\n  [BUG-19] 不在未完成句中因 maxChars 提前斷段\n  [BUG-20] 保護小數點與月份縮寫\n  [BUG-21] 強化側欄新聞標題清除\n  [BUG-22] Toyota Highlander 官方頁全文主分析分類\n  [BUG-23] Malibu/3BL 類官方產品頁分類與側欄雜訊排除";
+  $("docTable").querySelector("tbody").innerHTML="";
+  $("mainTable").querySelector("tbody").innerHTML="";
+  const db=$("debugBox"); db.textContent="尚未處理任何 PDF。"; db.classList.add("debug-hidden");
+}
+$("clearBtn").addEventListener("click", reset);
+
+// ─── text utilities ──────────────────────────────────────────────────────────
+function cleanBasic(s){
+  return String(s||"")
+    .replace(/\u00ad/g,"")
+    .replace(/￾/g,"-")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,"")
+    .replace(/[ \t]+/g," ")
+    .trim();
+}
+function cleanForAnalysis(s){
+  let t=cleanBasic(s)
+    .replace(/\s*[-–—]\s*\n\s*/g,"-")
+    .replace(/\s+\n\s+/g," ")
+    .replace(/\n+/g," ")
+    .replace(/\s{2,}/g," ")
+    .trim();
+  // v5.18: repair PDF text item spacing that corrupts decimals and common ligatures.
+  // Examples: "2. 5-liter" → "2.5-liter"; "Nov. 19" should not create a sentence break.
+  t=t.replace(/\b(\d+)\.\s+(\d+)\b/g,"$1.$2");
+  t=t.replace(/\b([A-Za-z])\s+ffi\s+([a-z]+)/g,"$1ffi$2");
+  t=t.replace(/\b([A-Za-z])\s+ff\s+([a-z]+)/g,"$1ff$2");
+  const reps=[[/\bJrst\b/g,"first"],[/\bOrst\b/g,"first"],[/\be\]cient\b/g,"efficient"],[/\be\]ciency\b/g,"efficiency"],[/\bvehide\b/g,"vehicle"],[/\bvehides\b/g,"vehicles"],[/\bJve\b/g,"five"],[/\bJbers\b/g,"fibers"],[/\bJber\b/g,"fiber"]];
+  for(const [a,b] of reps) t=t.replace(a,b);
+  return t;
+}
+function countLatinWords(s){return (String(s||"").match(/[A-Za-z]+(?:[-'][A-Za-z]+)?/g)||[]).length;}
+function countCJK(s){return (String(s||"").match(/[\u3400-\u9FFF\uF900-\uFAFF\u3040-\u30FF\uAC00-\uD7AF]/g)||[]).length;}
+function countNums(s){return (String(s||"").match(/\b\d+(?:\.\d+)?\b/g)||[]).length;}
+function charCount(s){return cleanBasic(s).replace(/\s/g,"").length;}
+function escapeRegExp(s){return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");}
+
+// hasAny: matches keywords against text.
+// NOTE v5.9: very short (≤3 char) pure-alpha keywords like "ad" require whole-word match
+// to avoid false matches inside words like "road", "standard", "additional".
+// However we have REMOVED "ad" from the default keyword lists entirely to prevent
+// false exclusion of legitimate body text that happens to contain "ad" alone
+// (e.g., "The ad hoc approach", "ad valorem", etc.).
+function hasAny(t,arr){
+  const text=String(t||"").toLowerCase();
+  for(const raw of arr){
+    const k=String(raw||"").trim().toLowerCase();
+    if(!k) continue;
+    if(/^[a-z0-9]+$/.test(k) && k.length<=3){
+      if(new RegExp("\\b"+escapeRegExp(k)+"\\b", "i").test(text)) return true;
+    }else{
+      if(text.includes(k)) return true;
+    }
+  }
+  return false;
+}
+function endsSentence(s){return /[.!?。！？]$/.test(cleanBasic(s));}
+function endsStrongSentence(s){
+  const t=cleanBasic(s);
+  if(!/[.!?。！？]$/.test(t)) return false;
+  // v5.18: avoid treating month abbreviations, names/titles, and numeric fragments as full sentence ends.
+  if(/\b(?:Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.$/i.test(t)) return false;
+  if(/\b(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|No|Inc|Corp|Co|Ltd)\.$/i.test(t)) return false;
+  if(/\b\d+\.$/.test(t)) return false;
+  return true;
+}
+function looksLikeDate(s){return /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\.?\s+\d{1,2},\s+\d{4}\b/i.test(s) || /\b\d{4}[\/\-.年]\d{1,2}[\/\-.月]\d{1,2}/.test(s) || /\b\d{4}-\d{2}-\d{2}\b/.test(s);}
+function looksTitle(s){
+  const t=cleanBasic(s);
+  const cc=charCount(t), wc=countLatinWords(t), cjk=countCJK(t);
+  if(cc<8 || cc>140) return false;
+  if(endsSentence(t) || looksLikeDate(t)) return false;
+  if(/^\d+[.)]?$/.test(t)) return false;
+  const words=t.split(/\s+/).filter(Boolean);
+  const alpha=(t.match(/[A-Za-z]/g)||[]).length;
+  const upper=(t.match(/[A-Z]/g)||[]).length;
+  const upperRatio=alpha?upper/alpha:0;
+  const hasHeadingPunct=/[:：]$/.test(t);
+  const mostlyCaps=alpha>=5 && upperRatio>=0.72;
+  const shortCJKHeading=cjk>0 && cc<=24 && !/[，。；：、,.!?]/.test(t);
+  if(shortCJKHeading) return true;
+  if(words.length<=12 && (mostlyCaps || hasHeadingPunct)) return true;
+  // v5.12 FIX [BUG-8]: require ≥ 3 words for the title-case branch.
+  // 2-word names like "Sebastian Cenizo" have titleCase/words=1.0 ≥ 0.65 and no commonLower
+  // → looksTitle=true → role="title" → triggers pushCurrent in makeBlocks → sentence fragments.
+  // Fixing the minimum to 3 words prevents author-name false positives.
+  if(words.length>=3 && words.length<=7){
+    const titleCase=words.filter(w=>/^[A-Z][a-z0-9'&/:-]+$/.test(w)).length;
+    const commonLower=/\b(the|and|or|of|to|with|for|from|in|on|is|are|as|by|that|this|will|can|has|have|a|an)\b/i.test(t);
+    if(titleCase/Math.max(words.length,1)>=0.65 && !commonLower) return true;
+  }
+  return false;
+}
+function isTableLike(s,cfg){
+  const clean=cleanBasic(s);
+  const t=clean.toLowerCase();
+  const cc=charCount(clean), nums=countNums(clean), words=countLatinWords(clean)+countCJK(clean);
+  if(!clean) return false;
+  // Strong standalone table/specification section headings.
+  if(/^\s*(specifications?|preliminary specifications|technical specifications|specification table|dimensions|gear ratios|electric drive system|chassis\/suspension|wheels\s*\/\s*tires)\s*[:：]?\s*$/i.test(clean)) return true;
+  // Specification field labels. These require a label-like colon pattern; ordinary prose
+  // containing "engine", "interior", "horsepower", etc. is NOT table-like by itself.
+  if(/^\s*(type|application|displacement|bore\s*&\s*stroke|block material|cylinder head material|crankshaft material|valvetrain|ignition system|fuel system|compression ratio|horsepower|torque|recommended fuel|max\.? engine speed|emissions controls|epa fuel economy|transmission|wheelbase|overall length|overall width|overall height|front track|rear track|seating capacity|headroom|legroom|shoulder room|hip room|curb weight|fuel tank|steering type|brake rotor diameter|wheel size|tires)\s*[:：]/i.test(clean)) return true;
+  // User-supplied table words now need tabular evidence unless they are explicit section headings.
+  if(hasAny(t,cfg.tableWords) && (/[:：|\t]/.test(clean) || nums>=3) && words<=80) return true;
+  if(cc>0 && nums>=8 && words>0 && words<=45 && nums/Math.max(words,1)>.25) return true;
+  if((String(s).match(/[|\t]/g)||[]).length>=3) return true;
+  return false;
+}
+
+// ─── noise detection ─────────────────────────────────────────────────────────
+function isObviousTopicNoiseText(s){
+  const raw=String(s||"");
+  const t=cleanBasic(raw).toLowerCase();
+  if(!t) return true;
+  if(/\b(?:jpg|jpeg|png|gif|webp)\b/i.test(t)) return true;
+  if(/(?:launch gallery|click above|high-res image|image gallery|featured gallery|live photos copyright|add us on|image not found|type unknown)/i.test(t)) return true;
+  if(/^(?:home|news|articles|search|login|dashboard|directory|e-shop|insurance|reviews|advice|features|videos|keyword)(?:\s+(?:home|news|articles|search|login|dashboard|directory|e-shop|insurance|reviews|advice|features|videos|keyword))*$/i.test(t)) return true;
+  if(/(?:latest coe prices|view full results|be notified on the latest news|enter email address|maplestory worlds|當年的楓之谷|當年的楓之⾕)/i.test(t)) return true;
+  if(/autoblog brings you car news|research and compare vehicles|email address sign up|you may unsubscribe/i.test(t)) return true;
+  if(/(?:milwaukee's cordless|these are the most reliable|bmw just built|tesla[’'\s]+s? clean lithium|toxic metals|wastewater|worst one to ever appear|dryer lint|tow hitch outside|overlooked tire brand)/i.test(t)) return true;
+  if(/(?:new posts|club fte|how-tos|site guidelines|search threads|affiliate programs|when you click on links|top community for ford truck|air filter replaced|slideshow)/i.test(t)) return true;
+  if(/recommended for you|trending stories|privacy policy|terms of use|terms of service|sitemap|editorial policy|all rights reserved/i.test(t)) return true;
+  if(/latest alerts|products & services|latest coe prices|you may also like|be notified on the latest news|more from general motors|follow sgcarmart|sgcarmart is the number one/i.test(t)) return true;
+  // v5.19: sidebar/news-card fragments observed in GM/Malibu and sgCarMart-derived pages
+  if(/(?:home car articles news news listings|april\s+2026\s*\|\s*2nd\s+bidding|avatr\s+07\s+max\s+review|erp\s+2\.0|tesla model y l premium|california fire foundation|used general motors fire hoses|get new life at potter park zoo|team up to donate vehicles|more from general motors)/i.test(t)) return true;
+  if(/source url|source status|affiliate programs|when you click on links|search threads|site guidelines|slideshow/i.test(t)) return true;
+  // v5.15: additional web-page/footer/forum/ad-tech noise observed in print-to-PDF sources
+  if(/compare vehicles,? too|start building for free|run anywhere, scale confidently|all times are gmt|the time now is/i.test(t)) return true;
+  if(/log in register|forums news marketplace|club fte|site guidelines search threads|home\s*\/\s*news|load more articles|follow us today/i.test(t)) return true;
+  if(/sign up to receive important media alerts|enter your email|email:\s*enter|share this article|send us a tip|contact the editor/i.test(t)) return true;
+  if(/powered by disqus|powered by terms|comment policy|comments for this thread|this discussion has been closed/i.test(t)) return true;
+  if(/sponsored\s+by\s+taboola|people who read this,? also read|featured videos powered by|new plug-in hybrids for 2025/i.test(t)) return true;
+  if(/the best f-150 deal|2023 nissan z|nice price or no dice|james bond film|dryer lint/i.test(t)) return true;
+  const menuTerms=["news","reviews","car buying","car research","tools","deals","maintenance","features","makes","sedan","crossover","luxury","sports","trucks","suv","electric","hybrids","coupes"];
+  let hits=0;
+  for(const k of menuTerms){ if(t.includes(k)) hits++; }
+  if(hits>=4 && charCount(t)<180 && !/[.!?。！？]/.test(t)) return true;
+  return false;
+}
+
+// stripInlineNoise: remove known inline ad/noise tokens from a line
+// This runs BEFORE line classification so clean_text is noise-free.
+// BUG-1 FIX: joinTopicLines now uses clean_text instead of raw_text,
+// so it's critical this function strips all problematic tokens.
+function stripInlineNoise(s,cfg={}){
+  let t=cleanBasic(s);
+  if(!t) return "";
+  // Advertisement tokens – case-insensitive, whole-word
+  t=t.replace(/\bAdvertisement\b/gi," ");
+  t=t.replace(/\bSponsored\b/gi," ");
+  // Autoblog-specific inline noise
+  t=t.replace(/(^|\s)Ad(?=\s|$)/g," ");
+  t=t.replace(/\b(?:Featured Gallery|Launch Gallery|Live photos copyright)\b.*$/i," ");
+  t=t.replace(/\bClick above for high-res image gallery of[^.!?。！？]*$/i," ");
+  t=t.replace(/\bAutoblog Newsletter\b.*$/i," ");
+  t=t.replace(/\bEmail Address\b.*$/i," ");
+  t=t.replace(/\bor sign in with\b.*$/i," ");
+  t=t.replace(/\bGoogle\s+Facebook\s+Microsoft\s+Apple\b/gi," ");
+  t=t.replace(/\bAdd us on\b/gi," ");
+  t=t.replace(/\bVisit Site\b/gi," ");
+  t=t.replace(/\bTop1Game\b.*$/i," ");
+  t=t.replace(/\bNetEase Games\b.*$/i," ");
+  t=t.replace(/即刻註冊[^\n]*/g," ");
+  t=t.replace(/打造出專屬[^\n]*/g," ");
+  t=t.replace(/\d+(?:\.\d+)?折\s*NT\$?\d+/g," ");
+  // Newsletter sign-up block
+  t=t.replace(/By signing up I agree to the Terms of Use.*$/i," ");
+  // v5.15: strip inline footer/newsletter fragments before line joining
+  t=t.replace(/\bAutoblog brings you car news;?\s*expert reviews[^.!?。！？]*$/i," ");
+  t=t.replace(/\bResearch and compare vehicles,? too\.?/i," ");
+  t=t.replace(/\bSign up to receive important Media Alerts.*$/i," ");
+  t=t.replace(/\bEmail:\s*Enter your email.*$/i," ");
+  t=t.replace(/\bAll times are GMT[^.!?。！？]*$/i," ");
+  t=t.replace(/\bThe time now is[^.!?。！？]*$/i," ");
+  t=t.replace(/\bPowered by Disqus.*$/i," ");
+  t=t.replace(/\bPowered by Terms.*$/i," ");
+  // v5.18: remove common sidebar/news-card titles when they are accidentally merged into article text.
+  t=t.replace(/\bTesla[’'\s]+s?\s*[‘'\"]?Clean[’'\"]?\s+Lithium Supply Faces(?:\s+Questions After Toxic Metals Found[^.!?。！？]*)?/gi," ");
+  t=t.replace(/\bThese Are the Most Reliable Mid-Size Trucks Right Now[^.!?。！？]*/gi," ");
+  t=t.replace(/\bMilwaukee[’']s Cordless Soldering Iron[^.!?。！？]*/gi," ");
+  t=t.replace(/\bThis Overlooked Tire Brand Is Actually The Only One Worth Buying[^.!?。！？]*/gi," ");
+  t=t.replace(/\bThis Car Was The Worst One To Ever Appear In A James Bond Film[^.!?。！？]*/gi," ");
+  t=t.replace(/\bAll The Different Uses For Your Tow Hitch Outside Of Just Towing[^.!?。！？]*/gi," ");
+  t=t.replace(/\bWhy You Should Never,? Ever Throw Away Your Dryer Lint[^.!?。！？]*/gi," ");
+  // v5.19: strip GM/Malibu sidebar cards and SGCarMart leftovers accidentally merged into article text
+  t=t.replace(/\bHome Car Articles News News Listings Chevrolet News\b/gi," ");
+  t=t.replace(/\bApril\s+2026\s*\|\s*2nd\s+BIDDING\b/gi," ");
+  t=t.replace(/\bAVATR\s+07\s+Max\s+Review[^.!?。！？]*/gi," ");
+  t=t.replace(/\bERP\s+2\.0:\s*5\s+things\s+we\s+know[^.!?。！？]*/gi," ");
+  t=t.replace(/\bTesla Model Y L Premium[^.!?。！？]*/gi," ");
+  t=t.replace(/\bCalifornia Fire Foundation(?:\s+and\s+Gen[- ]?eral Motors)?[^.!?。！？]*/gi," ");
+  t=t.replace(/\bUsed General Motors Fire Hoses[^.!?。！？]*/gi," ");
+  t=t.replace(/\bAmerica's Most Just Companies by Forbes and JUST Capital\b/gi," ");
+
+  // File-name noise within a line
+  t=t.replace(/\b\d{2,4}-?(?:juke|puntoevo|reveal-chicago)[^\s]*/gi," ");
+  t=t.replace(/\b(?:reveal-chicago|puntoevo|juke)-\d+[-\w]*/gi," ");
+  return cleanBasic(t);
+}
+
+function looksMetadataLine(s,cfg){
+  const clean=cleanBasic(s);
+  const t=clean.toLowerCase();
+  if(!clean) return false;
+  if(/^by\s+[A-Z][A-Za-z .'-]{2,60}$/.test(clean)) return true;
+  if(/^(author|reporter|editor|source|published|publication date|press contact|media contact)\s*[:：]/i.test(clean)) return true;
+  if(/^\[(?:author|source|date|published)\]/i.test(clean)) return true;
+  if(/^〔(?:出版日期|報刊名|版次\/版名|作者|報導地|主題類別|摘要)〕/.test(clean)) return true;
+  if(/^(出版日期|報刊名|版次|作者|記者|報導地|主題類別|摘要|發布日期|發稿日期|資料來源)\s*[:：]/.test(clean)) return true;
+  // v5.12 FIX [BUG-6]: The old threshold of 80 was too large.
+  // "LOS ANGELES, Nov. 19, 2008 – Ford\'s new 2010 Fusion is set to shake up the cut-"
+  // has charCount=63 (no spaces) < 80 AND looksLikeDate=true → wrongly classified as metadata.
+  // Fix: only treat as metadata if the line is SHORT (< 40 chars) OR has very few words (≤5).
+  // This correctly identifies pure date/dateline lines while keeping news-release lead paragraphs.
+  if(looksLikeDate(clean)){
+    const dateWords = countLatinWords(clean) + countCJK(clean);
+    if(charCount(clean)<40 || dateWords<=5) return true;
+  }
+  return false;
+}
+function isStandaloneNoiseLine(s,cfg){
+  const clean=cleanBasic(s);
+  const t=clean.toLowerCase();
+  if(!clean) return true;
+  if(isObviousTopicNoiseText(clean)) return true;
+  if(/^(features|deals|truck|news|sedan|crossover|luxury|sports|trucks|suv|electric|hybrids|coupes|maintenance|car repair|car care|tool deals|amazon deals|walmart deals|best savings|vehicle types|makes|reviews|latest alerts|clients|products & services|quick links|resources|for owners|article|forum|new cars|used cars|electric cars|hybrid cars)$/i.test(clean)) return true;
+  if(/^(release share|save|download|share this article|send a release|skip navigation|accessibility statement)$/i.test(clean)) return true;
+  if(/^(sign in|sign up|login|register|subscribe|newsletter)$/i.test(clean)) return true;
+  if(/^(google|facebook|microsoft|apple)$|^google\s+facebook\s+microsoft\s+apple$/i.test(clean)) return true;
+  if(/^(related articles|recommended for you|trending stories|about the author|start the conversation|privacy policy|terms of use|sitemap|editorial policy|comment|comments|got it|load more articles|follow us today)$/i.test(clean)) return true;
+  if(hasAny(t,cfg.hardBreakWords) || hasAny(t,cfg.noiseWords)){
+    const words=countLatinWords(clean)+countCJK(clean);
+    if(words<=12 || !/[.!?。！？]/.test(clean)) return true;
+  }
+  return false;
+}
+function lineRole(text,cfg,windowState={}){
+  const clean=cleanBasic(text);
+  const t=clean.toLowerCase();
+  const cc=charCount(clean);
+  if(!clean) return {role:"empty", include_suggestion:"exclude", qc_flag:"empty", reason:"empty_line"};
+  if(windowState.beforeStart){
+    return {role:"pre_main", include_suggestion:"exclude", qc_flag:"outside_main_window", reason:"before_start_marker"};
+  }
+  if(windowState.afterEnd){
+    return {role:"footer", include_suggestion:"exclude", qc_flag:"outside_main_window", reason:"after_end_marker"};
+  }
+  if(isStandaloneNoiseLine(clean,cfg)){
+    let role="noise";
+    if(/\b(?:advertisement|sponsored)\b|廣告|贊助/i.test(t)) role="ad_or_sponsored";
+    else if(/related|recommended|trending|相關|延伸|推薦|熱門/i.test(t)) role="related_content";
+    else if(/privacy|terms|sitemap|copyright|all rights reserved|©|隱私|使用條款|網站導覽|版權/i.test(t)) role="footer";
+    else if(/sign in|subscribe|newsletter|login|訂閱|電子報/i.test(t)) role="navigation";
+    return {role, include_suggestion:"exclude", qc_flag:"possible_noise", reason:"standalone_noise_or_navigation"};
+  }
+  if(looksMetadataLine(clean,cfg)){
+    return {role:"metadata", include_suggestion:"metadata_only", qc_flag:"ok", reason:"metadata_pattern"};
+  }
+  if(looksTitle(clean)){
+    return {role:"title", include_suggestion:"metadata_only", qc_flag:"ok", reason:"title_like"};
+  }
+  if(isTableLike(clean,cfg)){
+    return {role:"table_like", include_suggestion:"review", qc_flag:"table_like", reason:"table_or_numeric_pattern"};
+  }
+  if(cc<cfg.shortChars){
+    return {role:"main_text_candidate", include_suggestion:"review", qc_flag:"short_fragment", reason:`under_${cfg.shortChars}_chars_but_retained_for_sentence_joining`};
+  }
+  return {role:"main_text_candidate", include_suggestion: cc>=cfg.mainMinChars?"include":"review", qc_flag:"ok", reason:"main_text_candidate"};
+}
+
+// BUG-3 FIX: blockRole no longer checks hardBreakWords/noiseWords on the merged paragraph text.
+// Rationale: individual lines are already filtered by isStandaloneNoiseLine before they enter
+// makeBlocks. The merged paragraph text is built from clean_text (after fix BUG-1), so noise
+// keywords have already been stripped. Running hasAny on the merged text caused legitimate
+// paragraphs to be incorrectly excluded when residual noise tokens were present.
+// We retain only the obvious-noise guard (jpg/gallery/etc.) here.
+function blockRole(text,lineRoles,cfg){
+  const clean=cleanForAnalysis(text);
+  const t=clean.toLowerCase();
+  const cc=charCount(clean);
+  const roleCounts=lineRoles.reduce((a,r)=>{a[r]=(a[r]||0)+1;return a;},{});
+  if(roleCounts.pre_main){return {role:"pre_main", include_suggestion:"exclude", qc_flag:"outside_main_window", reason:"before_start_marker"};}
+  if(roleCounts.ad_or_sponsored || roleCounts.related_content || roleCounts.footer || roleCounts.navigation || roleCounts.noise){
+    const lr=lineRole(clean,cfg,{});
+    return {role: lr.role==="main_text_candidate"?"noise":lr.role, include_suggestion:"exclude", qc_flag:"possible_noise", reason:"contains_noise_or_hard_break_keyword"};
+  }
+  // Only obvious file-name / gallery noise excludes merged paragraphs
+  if(isObviousTopicNoiseText(clean)){
+    return {role:"noise", include_suggestion:"exclude", qc_flag:"possible_noise", reason:"obvious_noise_in_merged_block"};
+  }
+  if(roleCounts.metadata && Object.keys(roleCounts).length<=2){return {role:"metadata", include_suggestion:"metadata_only", qc_flag:"ok", reason:"metadata_block"};}
+  if(roleCounts.title && Object.keys(roleCounts).length<=2){return {role:"title", include_suggestion:"metadata_only", qc_flag:"ok", reason:"title_block"};}
+  if(isTableLike(clean,cfg)){return {role:"table_like", include_suggestion:"review", qc_flag:"table_like", reason:"table_or_numeric_pattern"};}
+  if(cc<cfg.shortChars){return {role:"short_fragment", include_suggestion:"review", qc_flag:"short_fragment", reason:`under_${cfg.shortChars}_chars`};}
+  return {role:"main_text_candidate", include_suggestion: cc>=cfg.mainMinChars?"include":"review", qc_flag:"ok", reason:"main_text_candidate"};
+}
+
+// v5.18 FIX [BUG-17]: never hard-split inside an unfinished sentence.
+// v5.15 used cfg.maxChars as a hard boundary, which produced rows such as
+// "bringing an" / "all-new hybrid..." and "class-exclusive" / "technologies...".
+// For STM and paragraph-level coding, an overlong complete sentence is safer than a
+// grammatically broken fragment.  This splitter only cuts at completed sentence
+// boundaries; if a sentence itself is very long because a PDF line lacks punctuation,
+// it is kept intact.
+function isDanglingSegment(s){
+  const t=cleanBasic(s);
+  if(!t) return false;
+  if(!endsSentence(t)) return true;
+  return /\b(?:a|an|the|of|to|for|with|and|or|but|bringing|including|featuring|class-exclusive|fuel-efficient|all-new)$/i.test(t);
+}
+function mergeContinuationFragments(parts){
+  const out=[];
+  for(const p0 of parts){
+    const p=cleanForAnalysis(p0);
+    if(!p) continue;
+    if(out.length){
+      const prev=out[out.length-1];
+      const startsContinuation=/^(?:[a-z]|[-–—]|all-new|class-exclusive|technologies|hybrid|fuel|power|performance|efficiency)\b/.test(p);
+      if(isDanglingSegment(prev) || startsContinuation){
+        out[out.length-1]=cleanForAnalysis(prev+" "+p);
+        continue;
+      }
+    }
+    out.push(p);
+  }
+  return out;
+}
+function splitLongText(text,cfg){
+  const clean=cleanForAnalysis(text);
+  if(!clean) return [];
+  if(charCount(clean)<=cfg.targetChars) return [clean];
+  // Keep sentence-ending punctuation with the sentence.
+  const sentences=clean.match(/[^.!?。！？]+[.!?。！？]+|[^.!?。！？]+$/g)||[clean];
+  const out=[]; let cur="";
+  for(const s0 of sentences){
+    const s=cleanForAnalysis(s0);
+    if(!s) continue;
+    if(!cur){ cur=s; continue; }
+    const wouldBe=cleanForAnalysis(cur+" "+s);
+    // Split only when the current chunk is a complete sentence.
+    if(charCount(wouldBe)>cfg.targetChars && endsStrongSentence(cur)){
+      out.push(cur.trim());
+      cur=s;
+    }else{
+      cur=wouldBe;
+    }
+  }
+  if(cur.trim()) out.push(cur.trim());
+  return mergeContinuationFragments(out);
+}
+function looksSectionHeadingLine(s){
+  const clean=cleanBasic(s);
+  if(!clean || endsSentence(clean) || looksLikeDate(clean)) return false;
+  const words=clean.split(/\s+/).filter(Boolean);
+  const cc=charCount(clean);
+  if(cc<6 || cc>120) return false;
+  if(/[,:;]$/.test(clean)) return true;
+  if(/^[A-Z0-9 ,&/()™®\-–—]+$/.test(clean) && words.length<=16) return true;
+  if(words.length<=8 && /^[A-Z]/.test(clean)){
+    const lower=/\b(the|and|or|of|to|with|for|from|in|on|is|are|as|by|that|this|will|can|has|have|a|an)\b/i.test(clean);
+    const titleCase=words.filter(w=>/^[A-Z][a-z0-9'&/:-]+$/.test(w)).length;
+    if(titleCase/Math.max(words.length,1)>=0.45 && !lower) return true;
+  }
+  return false;
+}
+
+// BUG-1 FIX (MAIN): joinTopicLines now uses clean_text (noise-stripped) instead of raw_text.
+// Previously, raw_text (the unprocessed PDF text item) was used, which could contain
+// "Advertisement", related article titles, and other inline noise.  When blockRole then
+// called hasAny(merged_text, hardBreakWords), the presence of noise tokens caused entire
+// paragraphs of legitimate press-release content to be discarded.
+function joinTopicLines(arr, cfg){
+  let out="";
+  for(const line of arr){
+    // Priority: clean_text (noise-stripped) > analysis_text > raw_text
+    // Never use raw_text alone – it has not been through stripInlineNoise.
+    const src = line.clean_text || line.analysis_text || line.raw_text || "";
+    const t=cleanForAnalysis(src);
+    if(!t) continue;
+    if(!out) out=t;
+    // Handle hyphenated line-wrap: "cut-\nthroat" → "cut-throat"
+    else if(/[-‐‑‒–—]$/.test(out) && /^[A-Za-z]/.test(t)) out += t;
+    else out += " " + t;
+  }
+  return cleanForAnalysis(out);
+}
+
+// BUG-2 FIX: finalizeParagraphText runs stripInlineNoise on the merged text as a safety net.
+// Even after joinTopicLines uses clean_text, sentences from OCR or unusual PDFs may still
+// carry residual tokens.  A second stripping pass ensures the block text is clean.
+function finalizeParagraphText(lineObjs, cfg){
+  let text = joinTopicLines(lineObjs, cfg);
+  // Second-pass noise strip on the merged paragraph text
+  text = stripInlineNoise(text, cfg);
+  text = text.replace(/\s+([,.;:!?])/g, "$1");
+  // Repair hyphenated line-wraps: "cut- throat" → "cut-throat"
+  text = text.replace(/\b([A-Za-z]+)-\s+([a-z]+)/g, "$1-$2");
+  return cleanForAnalysis(text);
+}
+
+function makeBlocks(lines,cfg,docMeta){
+  const blocks=[]; let cur=[]; let startLine=null; let startPage=null;
+  function pushCurrent(force=false){
+    if(!cur.length) return;
+    const saved=cur;
+    const sLine=startLine, sPage=startPage;
+    const eLine=saved[saved.length-1].global_line_number;
+    const ePage=saved[saved.length-1].page_number;
+    const methods=[...new Set(saved.map(x=>x.extraction_method))].join("+");
+    let joined=finalizeParagraphText(saved,cfg);
+    cur=[]; startLine=null; startPage=null;
+    if(!joined || isObviousTopicNoiseText(joined)) return;
+    const minChars=force ? Math.max(20, Math.min(cfg.mainMinChars, 40)) : cfg.mainMinChars;
+    const parts=splitLongText(joined,cfg).filter(x=>charCount(x)>=minChars && !isObviousTopicNoiseText(x));
+    const savedRoles=saved.map(x=>x.text_role).filter(Boolean);
+    for(const part of parts){
+      const roleInfo=blockRole(part,savedRoles.length?savedRoles:["main_text_candidate"],cfg);
+      // v5.12 FIX: preserve blockRole.  Do NOT force all blocks to main_text_candidate.
+      // Table/specification/footer/navigation/noise blocks must not enter Topic_Model_Input.
+      if(["ad_or_sponsored","related_content","footer","navigation","noise","pre_main","short_fragment","table_like"].includes(roleInfo.role)) continue;
+      blocks.push({
+        doc_id:docMeta.doc_id,
+        pdf_filename:docMeta.pdf_filename,
+        document_title:docMeta.document_title,
+        block_id:`${docMeta.doc_id}_b${String(blocks.length+1).padStart(5,"0")}`,
+        source_start_page:sPage,
+        source_start_line:sLine,
+        source_end_page:ePage,
+        source_end_line:eLine,
+        raw_text:joined,
+        clean_text:part,
+        analysis_text:part,
+        char_count:charCount(part),
+        cjk_char_count:countCJK(part),
+        latin_word_count:countLatinWords(part),
+        numeric_token_count:countNums(part),
+        text_role:roleInfo.role,
+        include_suggestion:roleInfo.include_suggestion,
+        qc_flag:roleInfo.qc_flag,
+        qc_reason:roleInfo.reason || "sentence_aware_merged_main_text",
+        extraction_method:methods
+      });
+    }
+  }
+  for(const line of lines){
+    const clean=cleanBasic(line.clean_text||line.analysis_text||line.raw_text||"");
+    if(!isEligibleTopicLine(line,cfg)){
+      // v5.12 FIX [BUG-11]: Only structural breaks trigger a paragraph push.
+      // Sidebar noise ("Truck","News"), navigation labels, ad snippets, and related-content
+      // lines are silently skipped — they must NOT interrupt paragraph accumulation.
+      // metadata is also removed: sidebar author names ("Sebastian Cenizo") classified
+      // as metadata should not break the preceding paragraph.
+      if(cur.length && ["title","pre_main","footer"].includes(line.text_role)) pushCurrent(true);
+      continue;
+    }
+    if(looksSectionHeadingLine(clean)){
+      if(cur.length) pushCurrent(true);
+      startLine=line.global_line_number; startPage=line.page_number;
+      cur.push(line);
+      continue;
+    }
+    if(!cur.length){startLine=line.global_line_number; startPage=line.page_number;}
+    cur.push(line);
+    const joined=finalizeParagraphText(cur,cfg);
+    if(charCount(joined)>=cfg.maxChars){
+      // v5.18: do not push merely because the already-joined text contains any punctuation.
+      // That caused blocks to end at line-wrap fragments such as "bringing an".
+      // Prefer waiting for the CURRENT line to end a real sentence; allow emergency flush only if extremely long.
+      if(endsStrongSentence(clean) || charCount(joined)>=cfg.maxChars*2.5) pushCurrent(false);
+    }else if(endsStrongSentence(clean) && charCount(joined)>=cfg.targetChars){
+      pushCurrent(false);
+    }
+  }
+  pushCurrent(true);
+  return blocks;
+}
+
+// ─── PDF.js text extraction ──────────────────────────────────────────────────
+// BUG-3 FIX: gap threshold reduced from 55 → 35 pts.
+// In many web-page-derived PDFs the sidebar column ends and the main content column
+// begins with a gap of only ~20-50 pts.  The previous 55-pt threshold failed to
+// separate them, merging sidebar ad text into the same "line" as article content.
+//
+// MULTI-COLUMN DETECTION (new in v5.9):
+// For rows that produce multiple segments, we use a heuristic to discard segments
+// that look like narrow left-sidebar items while keeping main-column content.
+// A segment is discarded if:
+//   • The row has 2+ segments, AND
+//   • This segment's start x < pageWidth * 0.30 (left 30% of page), AND
+//   • This segment's text is considerably shorter than the longest segment in the row
+// This prevents related-article titles and ad labels from being merged into the article body.
+async function pageTextPDFJS(page){
+  const c=await page.getTextContent();
+  const items=c.items.map(it=>{
+    const tx=it.transform||[1,0,0,1,0,0];
+    const w=(typeof it.width==="number"?it.width:0);
+    return {str:it.str||"",x:tx[4]||0,y:tx[5]||0,w};
+  }).filter(x=>x.str.trim());
+
+  if(!items.length) return [];
+
+  const viewport=page.getViewport({scale:1});
+  const pageWidth=viewport.width||612; // default letter width
+
+  items.sort((a,b)=>Math.abs(b.y-a.y)>3?b.y-a.y:a.x-b.x);
+  const rows=[];
+  for(const it of items){
+    let row=rows.find(r=>Math.abs(r.y-it.y)<3);
+    if(!row){row={y:it.y,chunks:[]};rows.push(row);}
+    row.chunks.push(it);
+  }
+  rows.sort((a,b)=>b.y-a.y);
+
+  const out=[];
+  for(const row of rows){
+    const chunks=row.chunks.sort((a,b)=>a.x-b.x);
+
+    // Build segments by gap threshold
+    const segments=[];
+    let seg=[]; let lastRight=null;
+    const flushSeg=()=>{
+      if(!seg.length) return;
+      const xStart=seg[0].x;
+      const xEnd=lastRight||xStart;
+      const text=seg.map(x=>x.str).join(" ").replace(/\s{2,}/g," ").trim();
+      if(text) segments.push({text, xStart, xEnd, textLen:text.length});
+      seg=[]; lastRight=null;
+    };
+    for(const ch of chunks){
+      const gap=lastRight===null?0:(ch.x-lastRight);
+      if(seg.length && gap>35) flushSeg(); // BUG-3 FIX: was 55
+      seg.push(ch);
+      lastRight=ch.x+(ch.w||0);
+    }
+    flushSeg();
+
+    if(segments.length===0) continue;
+    if(segments.length===1){
+      out.push(segments[0].text);
+      continue;
+    }
+
+    // v5.12: Reverted to v5.9 isSidebarCandidate approach.
+    // The v5.12 x-spread detection (BUG-7) incorrectly assumed main content = right column.
+    // On Jalopnik (main article LEFT, sidebar RIGHT), it discarded the main article
+    // and kept the right-side Nissan-Z content → Chrysler PDF had massive bleed-through.
+    // Safe heuristic: only discard segments that are (a) in left 30% of page width,
+    // (b) much shorter than the dominant segment, and (c) < 120 chars.
+    // This works for Autoblog (sidebar-left) without harming Jalopnik (sidebar-right).
+    {
+      const maxLen = Math.max(...segments.map(s => s.textLen));
+      for(const s of segments){
+        const isSidebarCandidate=(
+          s.xStart < pageWidth * 0.30 &&
+          s.textLen < maxLen * 0.5 &&
+          s.textLen < 120
+        );
+        if(!isSidebarCandidate) out.push(s.text);
+      }
+    }
+  }
+  return out.map(cleanBasic).filter(Boolean);
+}
+
+async function pageTextOCR(page, scale, lang, label){
+  const viewport=page.getViewport({scale});
+  const canvas=document.createElement("canvas");
+  canvas.width=Math.floor(viewport.width); canvas.height=Math.floor(viewport.height);
+  const ctx=canvas.getContext("2d",{willReadFrequently:true});
+  await page.render({canvasContext:ctx,viewport}).promise;
+  const res=await Tesseract.recognize(canvas, lang, {logger:m=>{
+    if(m.status && typeof m.progress==="number"){
+      const pct=Math.round(m.progress*100);
+      if(pct===25||pct===50||pct===75||pct===100) log(`    OCR ${label}: ${m.status} ${pct}%`);
+    }
+  }});
+  return (res.data.text||"").split(/\n+/).map(x=>x.trim()).filter(Boolean);
+}
+
+function cfgFromUI(){
+  return {
+    docMode:$("docMode").value,
+    splitMode:$("splitMode").value,
+    shortChars:Number($("shortChars").value||15),
+    targetChars:Number($("targetChars").value||450),
+    maxChars:Number($("maxChars").value||1300),
+    mainMinChars:Number($("mainMinChars").value||40),
+    ocrMode:$("ocrMode").value,
+    ocrThreshold:Number($("ocrThreshold").value||80),
+    ocrScale:Number($("ocrScale").value||1.75),
+    ocrLang:$("ocrLang").value,
+    hardBreakWords:kw($("hardBreakWords").value),
+    noiseWords:kw($("noiseWords").value),
+    metaWords:kw($("metaWords").value),
+    startMarkers:kw($("startMarkers").value),
+    endMarkers:kw($("endMarkers").value),
+    tableWords:kw($("tableWords").value)
+  };
+}
+
+function compactMarkerText(s){
+  return cleanBasic(s).toLowerCase().replace(/[^a-z0-9\u3400-\u9FFF\uF900-\uFAFF]+/g,"");
+}
+function hasMarkerLoose(text,markers){
+  const t=cleanBasic(text).toLowerCase();
+  const tc=compactMarkerText(text);
+  for(const m of markers){
+    if(hasAny(t,[m])) return true;
+    const mc=compactMarkerText(m);
+    if(mc && tc.includes(mc)) return true;
+  }
+  return false;
+}
+function findStartLineIndexGlobal(lineObjs,cfg){
+  // v5.15: Only strong, content-bearing markers can become a hard "main window" start.
+  // Weak UI labels such as "RELEASE SHARE", "SAVE", "DOWNLOAD", "latest news",
+  // or city names should not discard the title, subtitle, and product bullet points
+  // that often precede the main body on official OEM pages.
+  const strongStart=["press release","news release","for immediate release","news provided by","for release","official press release","官方新聞稿","新聞稿"];
+  for(let i=0;i<lineObjs.length;i++){
+    const raw=cleanBasic(lineObjs[i].raw_text);
+    if(hasMarkerLoose(raw,strongStart)) return i;
+  }
+  return -1;
+}
+function shouldExcludeStartLineFromMainWindow(lineText){
+  const raw=cleanBasic(lineText);
+  const t=raw.toLowerCase();
+  // Exclude structural labels only. Keep dateline lead sentences such as
+  // "NEW YORK – Ford Motor Company..." and "DETROIT, March 21...".
+  if(/^\s*(press release|news release|news provided by)\s*$/i.test(raw)) return true;
+  if(/^\s*(release share|save|download)\b/i.test(raw)) return true;
+  if(/^\s*for immediate release\s*$/i.test(raw)) return true;
+  if(/^\s*for release\s*[:：]\s*\d{4}/i.test(raw)) return false;
+  if(/^\s*(new york|detroit|los angeles|torrance|tokyo|taipei)\b/i.test(raw)) return false;
+  if(charCount(raw)>=60 && /[.!?。！？]/.test(raw)) return false;
+  return false;
+}
+function isProductBodyLineForEnd(raw){
+  const t=cleanBasic(raw).toLowerCase();
+  const cc=charCount(t);
+  if(cc<55) return false;
+  const productTerms=/\b(?:hybrid|fusion|milan|malibu|vue|highlander|toyota|silverado|sierra|tahoe|yukon|escalade|aspen|durango|escape|mariner|mercedes|benz|saturn|aura|vehicle|car|truck|suv|sedan|engine|powertrain|battery|electric|fuel|mpg|economy|performance|interior|exterior|steering|driving|motor|transmission|model)\b/i;
+  const webTerms=/\b(?:comments|privacy|terms of use|subscribe|newsletter|recommended for you|people who read this|sponsored|taboola|follow us|contact the editor|share this article|login|sign up)\b/i;
+  return productTerms.test(t) && !webTerms.test(t);
+}
+function matchesGlobalEndLine(raw,markers){
+  const clean=cleanBasic(raw);
+  const t=clean.toLowerCase();
+  if(!clean) return false;
+  if(isProductBodyLineForEnd(clean)) return false;
+  for(const m0 of markers){
+    const m=String(m0||"").trim().toLowerCase();
+    if(!m) continue;
+    if(m.length<=6 || /^[a-z]+:?$/.test(m)){
+      if(t===m || t.startsWith(m+" ") || t.startsWith(m+":")) return true;
+    }else{
+      if(t.includes(m)) return true;
+    }
+  }
+  return false;
+}
+function hasProductBodySoonAfter(lineObjs,idx,windowSize=30){
+  const end=Math.min(lineObjs.length, idx+1+windowSize);
+  let productHits=0;
+  for(let j=idx+1;j<end;j++){
+    const raw=cleanBasic(lineObjs[j]?.raw_text||"");
+    if(!raw) continue;
+    if(isProductBodyLineForEnd(raw)) productHits++;
+    if(productHits>=2) return true;
+  }
+  return false;
+}
+function findEndLineIndexGlobal(lineObjs,cfg,startIdx){
+  const begin=Math.max(0,startIdx>=0?startIdx+1:0);
+  const strongEnd=[
+    "about the author","start the conversation","recommended for you","trending stories",
+    "latest alerts","clients","products & services","latest coe prices","you may also like",
+    "be notified on the latest news","more from general motors","more from this source",
+    "more releases from this source","people who read this","follow greencarreports",
+    "follow us today","tags:","contribute:","log in sign up","powered by terms",
+    "sort by best","what do you think","request a demo","contact pr newswire",
+    "about pr newswire","about cision","comments for this thread","conversation comments",
+    "green car reports comment policy","powered by disqus","featured videos powered by",
+    "關於作者","相關新聞","延伸閱讀","推薦文章","熱門文章","留言區","留言"
+  ];
+  const weakFooter=["privacy policy","terms of use","terms of service","sitemap","editorial policy","all rights reserved","©","contact us","share this article","newsletter","subscribe","sign in"];
+  const cfgStrong=(cfg.endMarkers||[]).filter(m=>!hasAny(m,weakFooter));
+  const endList=[...strongEnd,...cfgStrong];
+  for(let i=begin;i<lineObjs.length;i++){
+    if(matchesGlobalEndLine(lineObjs[i].raw_text,endList)){
+      // v5.18: Many web-to-PDF pages place sidebar blocks such as "Latest COE Prices"
+      // before the actual product article.  Do not treat such early sidebar markers as
+      // a global end if product-body lines immediately follow.
+      if(i < Math.floor(lineObjs.length*0.70) && hasProductBodySoonAfter(lineObjs,i,35)) continue;
+      return i;
+    }
+  }
+  const weakBegin=Math.max(begin, Math.floor(lineObjs.length*0.75));
+  for(let i=weakBegin;i<lineObjs.length;i++){
+    if(matchesGlobalEndLine(lineObjs[i].raw_text,weakFooter)) return i;
+  }
+  return -1;
+}
+
+function withCandidateFields(row, confidence, source, reason){
+  return {...row, candidate_confidence:confidence, candidate_source:source, candidate_reason:reason};
+}
+function isClearNoiseRole(role){
+  return ["ad_or_sponsored","related_content","footer","navigation","noise","pre_main"].includes(role);
+}
+function buildMainCandidates(blocks,cfg){
+  const out=[]; const seen=new Set();
+  const add=(b,confidence,source,reason)=>{
+    if(!b || seen.has(b.block_id)) return;
+    seen.add(b.block_id);
+    out.push(withCandidateFields(b,confidence,source,reason));
+  };
+  for(const b of blocks){
+    if(b.text_role==="main_text_candidate" && b.include_suggestion==="include"){
+      add(b,"high","strict_rule","main_text_candidate_and_include");
+    }
+  }
+  for(const b of blocks){
+    if(b.text_role==="main_text_candidate" && !seen.has(b.block_id) && b.char_count>=cfg.shortChars){
+      add(b,"medium","broad_rule","main_text_candidate_review");
+    }
+  }
+  for(const b of blocks){
+    if(seen.has(b.block_id)) continue;
+    if(isClearNoiseRole(b.text_role)) continue;
+    if(["metadata","title","table_like","short_fragment","pre_main"].includes(b.text_role)) continue;
+    if(/\b(?:jpg|jpeg|png|gif|webp)\b/i.test(b.analysis_text||"")) continue;
+    if(/launch gallery|click above|image gallery/i.test(b.analysis_text||"")) continue;
+    if(b.char_count>=cfg.mainMinChars){
+      add(b,"low","broad_rule","not_clear_noise_but_needs_review");
+    }
+  }
+  if(out.length===0){
+    for(const b of blocks){
+      if(seen.has(b.block_id)) continue;
+      if(!b.analysis_text || b.char_count<cfg.mainMinChars) continue;
+      const pureFooter = ["footer","related_content","navigation","pre_main","table_like","short_fragment"].includes(b.text_role);
+      const tinyAd = b.text_role==="ad_or_sponsored" && b.char_count<250;
+      const fileNameNoise = isObviousTopicNoiseText(b.analysis_text||"");
+      if(pureFooter || tinyAd || fileNameNoise) continue;
+      add(b,"low","fallback_rule","no_strict_candidates_fallback_from_blocks");
+    }
+  }
+  if(out.length===0){
+    for(const b of blocks){
+      if(seen.has(b.block_id)) continue;
+      if(b.analysis_text && b.char_count>=cfg.shortChars){
+        add(b,"low","last_resort","all_candidates_empty_check_blocks_all_before_analysis");
+      }
+    }
+  }
+  return out;
+}
+
+function isEligibleTopicLine(line,cfg){
+  if(Number(line.in_main_window)===0) return false;
+  if(line.text_role!=="main_text_candidate") return false;
+  if(line.include_suggestion==="exclude") return false;
+  if(isObviousTopicNoiseText(line.analysis_text||line.clean_text||line.raw_text)) return false;
+  // v5.12 FIX [BUG-10]: use <= instead of < to also exclude lines with exactly shortChars chars.
+  // "Sebastian Cenizo" has charCount=15 == shortChars=15: with old <, it was eligible and
+  // leaked into cur, contaminating press-release paragraphs with sidebar author names.
+  if(charCount(line.clean_text||line.raw_text)<=cfg.shortChars && !endsSentence(line.clean_text||line.raw_text)) return false;
+  return true;
+}
+function meta(docName){
+  const base=docName.replace(/\.pdf$/i,"").replace(/\(\d+\)$/," ").trim();
+  return {
+    doc_id: base.replace(/[^\p{L}\p{N}]+/gu,"_").replace(/^_+|_+$/g,""),
+    pdf_filename: docName,
+    document_title: base
+  };
+}
+
+// ─── main per-file processing ─────────────────────────────────────────────────
+async function processFile(file,cfg){
+  const doc=meta(file.name);
+  const ab=await file.arrayBuffer();
+  const pdf=await pdfjsLib.getDocument({data:ab}).promise;
+  const rawLineObjs=[]; const fileLines=[]; const pageQC=[];
+  let ocrPages=0, pdfTextPages=0, globalLine=0;
+
+  for(let p=1;p<=pdf.numPages;p++){
+    const page=await pdf.getPage(p);
+    let method="pdf_text";
+    let rawLines=await pageTextPDFJS(page); // BUG-3 fix inside
+    let rawChars=rawLines.map(cleanBasic).join(" ").length;
+    const doOCR = cfg.ocrMode==="always" || (cfg.ocrMode==="auto" && rawChars<cfg.ocrThreshold);
+    if(doOCR && cfg.ocrMode!=="never"){
+      method="ocr"; ocrPages++;
+      log(`  p.${p}: OCR（原抽字 ${rawChars} chars）`);
+      rawLines=await pageTextOCR(page,cfg.ocrScale,cfg.ocrLang,`${file.name} p.${p}`);
+      rawChars=rawLines.map(cleanBasic).join(" ").length;
+    }else{
+      pdfTextPages++;
+    }
+    for(let i=0;i<rawLines.length;i++){
+      rawLineObjs.push({page_number:p, extraction_method:method, raw_text:rawLines[i]});
+    }
+    pageQC.push({doc_id:doc.doc_id,pdf_filename:doc.pdf_filename,page_number:p,extraction_method:method,raw_line_count:rawLines.length,raw_char_count:rawChars,page_qc_flag:rawLines.length?"ok":"problematic",page_qc_reason:rawLines.length?"page_text_extracted":"no_text_on_page"});
+  }
+
+  const startIdx=findStartLineIndexGlobal(rawLineObjs,cfg);
+  const endIdx=findEndLineIndexGlobal(rawLineObjs,cfg,startIdx);
+
+  // ── Debug: show marker lines ──
+  const startMarkerText=startIdx>=0?rawLineObjs[startIdx].raw_text:"(未找到)";
+  const endMarkerText=endIdx>=0?rawLineObjs[endIdx].raw_text:"(未找到)";
+  log(`  ── 標記偵測 ──`);
+  log(`  原始行數 (rawLineObjs): ${rawLineObjs.length}`);
+  log(`  Start marker @ line ${startIdx>=0?startIdx+1:"N/A"}: "${startMarkerText.slice(0,80)}"`);
+  log(`  End marker   @ line ${endIdx>=0?endIdx+1:"N/A"}: "${endMarkerText.slice(0,80)}"`);
+
+  let pageNoiseMap=new Map(), pageMainMap=new Map(), pageShortMap=new Map();
+  for(let idx=0; idx<rawLineObjs.length; idx++){
+    const obj=rawLineObjs[idx];
+    globalLine++;
+    const rawClean=cleanBasic(obj.raw_text);
+    // BUG-1 prerequisite: clean_text = stripInlineNoise(rawClean) is the noise-free version
+    const clean=stripInlineNoise(rawClean,cfg);
+    // v5.12 FIX: do not automatically discard the start-marker line.
+    // Structural markers (PRESS RELEASE / NEWS PROVIDED BY / FOR RELEASE) are excluded,
+    // but dateline lead sentences (NEW YORK / DETROIT / LOS ANGELES...) are retained.
+    const excludeStartLine = startIdx>=0 && shouldExcludeStartLineFromMainWindow(rawLineObjs[startIdx].raw_text);
+    const beforeStart=startIdx>=0 && (idx<startIdx || (idx===startIdx && excludeStartLine));
+    const afterEnd=endIdx>=0 && idx>=endIdx;
+    const roleInfo=lineRole(clean,cfg,{beforeStart,afterEnd});
+    if(["ad_or_sponsored","related_content","footer","navigation","noise","pre_main"].includes(roleInfo.role)) pageNoiseMap.set(obj.page_number,(pageNoiseMap.get(obj.page_number)||0)+1);
+    if(roleInfo.role==="main_text_candidate") pageMainMap.set(obj.page_number,(pageMainMap.get(obj.page_number)||0)+1);
+    if(roleInfo.role==="short_fragment") pageShortMap.set(obj.page_number,(pageShortMap.get(obj.page_number)||0)+1);
+    fileLines.push({
+      doc_id:doc.doc_id,
+      pdf_filename:doc.pdf_filename,
+      document_title:doc.document_title,
+      page_number:obj.page_number,
+      global_line_number:globalLine,
+      extraction_method:obj.extraction_method,
+      raw_text:obj.raw_text,
+      clean_text:clean,                   // BUG-1 FIX: noise-stripped version stored here
+      analysis_text:cleanForAnalysis(clean),
+      char_count:charCount(clean),
+      cjk_char_count:countCJK(clean),
+      latin_word_count:countLatinWords(clean),
+      numeric_token_count:countNums(clean),
+      text_role:roleInfo.role,
+      include_suggestion:roleInfo.include_suggestion,
+      qc_flag:roleInfo.qc_flag,
+      qc_reason:roleInfo.reason,
+      in_main_window:beforeStart?0:(afterEnd?0:1),
+      start_marker_line:startIdx>=0?startIdx+1:"",
+      end_marker_line:endIdx>=0?endIdx+1:""
+    });
+  }
+  for(const pq of pageQC){
+    pq.main_line_count=pageMainMap.get(pq.page_number)||0;
+    pq.noise_line_count=pageNoiseMap.get(pq.page_number)||0;
+    pq.short_line_count=pageShortMap.get(pq.page_number)||0;
+    if(pq.raw_line_count>0 && pq.noise_line_count/pq.raw_line_count>.65){pq.page_qc_flag="review"; pq.page_qc_reason="high_noise_or_outside_main_window_ratio";}
+  }
+
+  const blocks=makeBlocks(fileLines,cfg,doc);
+  const strictMain=blocks.filter(b=>b.text_role==="main_text_candidate" && b.include_suggestion==="include")
+    .map(b=>withCandidateFields(b,"high","strict_rule","main_text_candidate_and_include"));
+  const main=buildMainCandidates(blocks,cfg);
+  const noise=blocks.filter(b=>["ad_or_sponsored","related_content","footer","navigation","noise","pre_main"].includes(b.text_role));
+  const metaRows=blocks.filter(b=>["metadata","title"].includes(b.text_role));
+  const totalChar=blocks.reduce((a,b)=>a+b.char_count,0);
+  const totalCJK=blocks.reduce((a,b)=>a+b.cjk_char_count,0);
+  const noiseRatio=blocks.length?noise.length/blocks.length:0;
+  const shortRatio=blocks.length?blocks.filter(b=>b.text_role==="short_fragment").length/blocks.length:0;
+  const tableRatio=blocks.length?blocks.filter(b=>b.text_role==="table_like").length/blocks.length:0;
+  let extractionStatus="EXTRACTION_OK", analysis="READY_FOR_REVIEW", reason="text_extracted_topic_input_generated";
+  if(fileLines.length===0 || blocks.length===0){extractionStatus="REPROCESS_RECOMMENDED"; analysis="NOT_RECOMMENDED"; reason="no_text_or_no_blocks";}
+  else if(strictMain.length>=3 && noiseRatio<.50){analysis="READY_FOR_ANALYSIS_CANDIDATE"; reason="main_window_and_strict_candidates_available";}
+  else if(main.length>=1){analysis="READY_FOR_REVIEW"; reason="candidate_rows_available_review_before_analysis";}
+  else if(noiseRatio>=.50){extractionStatus="EXTRACTION_OK_REVIEW_NEEDED"; analysis="NOISY_REVIEW_REQUIRED"; reason="high_noise_ratio_review_needed";}
+  const docIndex={
+    ...doc,page_count:pdf.numPages,raw_line_count:fileLines.length,block_count:blocks.length,main_candidate_count:main.length,strict_main_candidate_count:strictMain.length,noise_candidate_count:noise.length,metadata_candidate_count:metaRows.length,
+    pdf_text_page_count:pdfTextPages,ocr_page_count:ocrPages,total_char_count:totalChar,total_cjk_char_count:totalCJK,
+    avg_chars_per_block:blocks.length?totalChar/blocks.length:0,noise_ratio:noiseRatio,short_fragment_ratio:shortRatio,table_like_ratio:tableRatio,
+    start_marker_line:startIdx>=0?startIdx+1:"",end_marker_line:endIdx>=0?endIdx+1:"",extraction_status:extractionStatus,analysis_readiness:analysis,decision_reason:reason
+  };
+
+  // ── BUG-5 FIX: Debug preview ──
+  // Collect debug info for this file so it can be displayed in the debug panel.
+  const eligibleLines = fileLines.filter(l=>isEligibleTopicLine(l,cfg));
+  const debugEntry=[
+    `═══ ${file.name} ═══`,
+    `  原始行 raw lines: ${rawLineObjs.length}`,
+    `  fileLines (after role assignment): ${fileLines.length}`,
+    `  Eligible lines (in_main_window=1 & main_text_candidate): ${eligibleLines.length}`,
+    `  Start marker @ line ${startIdx>=0?startIdx+1:"N/A"}: "${startMarkerText.slice(0,100)}"`,
+    `  End marker   @ line ${endIdx>=0?endIdx+1:"N/A"}: "${endMarkerText.slice(0,100)}"`,
+    `  Blocks built: ${blocks.length}`,
+    `  Main candidates: ${main.length}`,
+    `  Strict main: ${strictMain.length}`,
+    `  Noise blocks: ${noise.length}`,
+    ``,
+    `  ── 前 10 筆 analysis_text 預覽 ──`,
+    ...main.slice(0,10).map((b,i)=>`  [${i+1}] (${b.char_count}c, p${b.source_start_page}) ${(b.analysis_text||"").slice(0,200)}${(b.analysis_text||"").length>200?"...":""}`)
+  ];
+  debugLines.push(debugEntry.join("\n"));
+
+  return {docIndex,fileLines,blocks,main,strictMain,noise,metaRows,pageQC,startIdx,endIdx};
+}
+
+// ─── workbook builder ─────────────────────────────────────────────────────────
+function inferTextSourceType(r,d){
+  const role=String(r.text_role||"");
+  const text=String(r.analysis_text||r.clean_text||r.raw_text||"");
+  const low=text.toLowerCase();
+  const fileName=String(d.pdf_filename||d.document_title||"").toLowerCase();
+  const docTitle=String(d.document_title||d.pdf_filename||"").toLowerCase();
+  if(["ad_or_sponsored","related_content","footer","navigation","noise","pre_main"].includes(role) || isObviousTopicNoiseText(text)) return "web_noise";
+  if(role==="table_like") return "spec_table";
+  if(role==="metadata" || role==="title") return "metadata_or_title";
+  const mediaCue=/\b(?:full press release (?:after|below) the jump|that's right|who knew|we've received|we're kinda|one big name|this overlooked|worst one|dryer lint|tire brand|nice price|comment policy|people who read this|official:\s*gm quietly drops|at a special event last week|reports in recent months|declined to comment|send us a tip|contact the editor)\b/i;
+  if(mediaCue.test(text)) return "media_article";
+  const forumOrMedia=/\b(?:toyota owners club|invision community|existing user|start new topic|forums?|log in register|marketplace|new posts|comment|reply|green car reports|jalopnik|autoblog|nice price|people who read this|send us a tip)\b/i.test(low);
+  const startLine=Number(d.start_marker_line||0);
+  const line=Number(r.source_start_line||r.global_line_number||0);
+  if(startLine>0 && line>0 && line<startLine) return "media_intro";
+  if(startLine>0 && line>=startLine) return "official_press_release";
+  if(/\b(for release|press release|news release|news provided by|official press release)\b/i.test(text)) return "official_press_release";
+
+  // v5.19: document-level official product pages. Toyota newsroom/Canada and Toyota press-style PDFs
+  // often only mention the brand in early paragraphs; later paragraphs are still the same official article.
+  const isToyotaHighlanderDoc=/toyota[_\s-]+highlander[_\s-]+hybrid/i.test(fileName+" "+docTitle);
+  const isToyotaForumDoc=/2005[_\s-]*2007/i.test(fileName+" "+docTitle) || /toyota owners club/i.test(low);
+  if(isToyotaHighlanderDoc && !isToyotaForumDoc && !forumOrMedia){
+    return "official_product_page";
+  }
+
+  // v5.19: GM/Chevrolet official or quasi-official campaign/product pages such as Malibu 2016 on 3BL Media.
+  // Classify product-focused rows as official_product_page while leaving sidebars and company boilerplate in review.
+  const isChevyMalibuDoc=/chevrolet[_\s-]+malibu|malibu[_\s-]+gen/i.test(fileName+" "+docTitle);
+  const chevyProductCue=/\b(?:malibu hybrid|chevrolet malibu|malibu eco|eassist|gm hybrid system|hybrid details|hybrid powertrain|lithium-ion battery|regenerative braking|electric motor|drive unit|fuel economy|epa-estimated|chevrolet cars|chevy malibu|volt|myLink|teen driver|safety features|connectivity|driving dynamics)\b/i.test(low);
+  const chevyBoilerplate=/\b(?:general motors corp\.|founded in 1908|founded in 1911|world's largest automaker|chevrolet customer experience|mobile\s+\d{3}|p\.o\. box|contact us|more from general motors)\b/i.test(low);
+  if(isChevyMalibuDoc && chevyProductCue && !chevyBoilerplate && !forumOrMedia){
+    return "official_product_page";
+  }
+
+  const brandCue=/\b(?:toyota|highlander|ford|mercury|gm|general motors|chevrolet|malibu|saturn|vue|mercedes|mercedes-benz|chrysler|dodge|lincoln)\b/i.test(text+" "+docTitle);
+  const productCue=/\b(?:toyota newsroom|toyota canada|toyota motor sales|launches hybrid offensive|product highlights|overview|highlights of the|announced today|goes on sale|will be available|will arrive|new \d{4}|all-new|hybrid model|hybrid system|hybrid synergy drive|powertrain|fuel economy|epa-estimated|midsize sedan|mid-size suv|crossover|official press release)\b/i.test(low);
+  if(brandCue && productCue && !forumOrMedia) return "official_product_page";
+  if(/\b(announced today|goes on sale|will be available|will arrive|new \d{4}|all-new|hybrid model|hybrid system|hybrid synergy drive|powertrain|fuel economy|epa-estimated|product highlights|overview|highlights of the)\b/i.test(low)) return "unknown_product_text";
+  return "unknown";
+}
+function topicIncludeDecision(r,cfg){
+  const role=String(r.text_role||"");
+  const chars=Number(r.char_count||0);
+  const text=String(r.analysis_text||"");
+  const clearNoiseRoles=new Set(["ad_or_sponsored","related_content","footer","navigation","noise","pre_main"]);
+  const specLike=/\b(?:specifications?|engine\s+type|assembly site|application:|displacement|bore\s*&\s*stroke|block material|cylinder head material|compression ratio|horsepower|torque|recommended fuel|max\. engine speed|emissions controls|brake rotor diameter|wheelbase|curb weight|fuel tank|gear ratios)\b/i.test(text) && Number(r.numeric_token_count||0)>=3;
+  const siteCrumb=/^(?:home|car|news|articles|search|login|dashboard|directory|e-shop|insurance|reviews|advice|features|videos|keyword|listings|chevrolet)(?:\s+(?:home|car|news|articles|search|login|dashboard|directory|e-shop|insurance|reviews|advice|features|videos|keyword|listings|chevrolet))*$/i.test(cleanBasic(text));
+  const contactOrBoiler=/\b(?:general motors corp\.|world\'s largest automaker|chevrolet customer experience|mobile\s+\d{3}|p\.o\. box|courtney moats|contact us\s*\||@chevycustcare)\b/i.test(text);
+  const bad=isObviousTopicNoiseText(text) || /\b(?:jpg|jpeg|png|gif|webp)\b/i.test(text) || /launch gallery|click above|image gallery|image not found|type unknown/i.test(text) || specLike || siteCrumb || contactOrBoiler;
+  return (!clearNoiseRoles.has(role) && chars>=Number(cfg.mainMinChars||40) && !["table_like","short_fragment","pre_main"].includes(role) && !bad) ? 1 : 0;
+}
+function appendJsonSheet(wb, name, rows, headers, widths=[]){
+  const ws=XLSX.utils.json_to_sheet(rows,{header:headers});
+  if(widths.length) ws["!cols"]=widths.map(w=>({wch:w}));
+  const endRow=Math.max(rows.length,1);
+  const range=XLSX.utils.encode_range({s:{r:0,c:0},e:{r:endRow,c:headers.length-1}});
+  ws["!autofilter"]={ref:range};
+  XLSX.utils.book_append_sheet(wb,ws,name.slice(0,31));
+}
+function makeWorkbook(){
+  const wb=XLSX.utils.book_new();
+  const cfg=cfgFromUI();
+  const docMap=new Map(allDocs.map(d=>[d.doc_id,d]));
+
+  const candidateRows=allMain.map((r,idx)=>{
+    const d=docMap.get(r.doc_id)||{};
+    const role=String(r.text_role||"");
+    const conf=String(r.candidate_confidence||"");
+    const chars=Number(r.char_count||0);
+    const include=topicIncludeDecision(r,cfg);
+    const textSourceType=inferTextSourceType(r,d);
+    const review=(conf==="low" || r.qc_flag!=="ok" || include===0 || ["unknown","unknown_product_text","media_article","media_intro"].includes(textSourceType)) ? 1 : 0;
+    const useMain=(include===1 && ["official_press_release","official_product_page"].includes(textSourceType)) ? 1 : 0;
+    const useRobust=(include===1 && ["media_intro","media_article","unknown_product_text","unknown"].includes(textSourceType)) ? 1 : 0;
+    return {
+      doc_id:r.doc_id||"",
+      pdf_filename:r.pdf_filename||"",
+      document_title:r.document_title||"",
+      page_number:r.source_start_page||"",
+      page_range:(r.source_start_page && r.source_end_page && r.source_start_page!==r.source_end_page) ? `${r.source_start_page}-${r.source_end_page}` : (r.source_start_page||""),
+      text_id:r.block_id || `text_${String(idx+1).padStart(6,"0")}`,
+      analysis_text:r.analysis_text||"",
+      clean_text:r.clean_text||"",
+      char_count:chars,
+      cjk_char_count:Number(r.cjk_char_count||0),
+      word_count:Number(r.latin_word_count||0),
+      numeric_token_count:Number(r.numeric_token_count||0),
+      text_role:role,
+      text_source_type:textSourceType,
+      use_for_main_analysis:useMain,
+      use_for_robustness_check:useRobust,
+      candidate_confidence:conf,
+      candidate_source:r.candidate_source||"",
+      candidate_reason:r.candidate_reason||"",
+      include_for_topic_model:include,
+      review_before_use:review,
+      qc_flag:r.qc_flag||"",
+      qc_reason:r.qc_reason||"",
+      extraction_method:r.extraction_method||"",
+      source_start_line:r.source_start_line||"",
+      source_end_line:r.source_end_line||"",
+      document_extraction_status:d.extraction_status||"",
+      document_analysis_readiness:d.analysis_readiness||"",
+      document_decision_reason:d.decision_reason||"",
+      start_marker_line:d.start_marker_line||"",
+      end_marker_line:d.end_marker_line||""
+    };
+  });
+  const topicRows=candidateRows.filter(r=>r.include_for_topic_model===1);
+  const topicHeaders=[
+    "doc_id","pdf_filename","document_title","page_number","page_range","text_id",
+    "analysis_text","clean_text","char_count","cjk_char_count","word_count","numeric_token_count",
+    "text_role","text_source_type","use_for_main_analysis","use_for_robustness_check",
+    "candidate_confidence","candidate_source","candidate_reason",
+    "include_for_topic_model","review_before_use","qc_flag","qc_reason","extraction_method",
+    "source_start_line","source_end_line","document_extraction_status","document_analysis_readiness","document_decision_reason","start_marker_line","end_marker_line"
+  ];
+  appendJsonSheet(wb,"Topic_Model_Input",topicRows,topicHeaders,[20,34,34,10,10,26,90,80,10,12,10,16,22,22,18,22,18,20,34,18,16,14,34,18,16,16,24,28,38,16,16]);
+
+  const lineRows=allLines.map(l=>({
+    doc_id:l.doc_id||"",
+    pdf_filename:l.pdf_filename||"",
+    document_title:l.document_title||"",
+    page_number:l.page_number||"",
+    global_line_number:l.global_line_number||"",
+    extraction_method:l.extraction_method||"",
+    raw_text:l.raw_text||"",
+    clean_text:l.clean_text||"",
+    analysis_text:l.analysis_text||"",
+    char_count:Number(l.char_count||0),
+    cjk_char_count:Number(l.cjk_char_count||0),
+    word_count:Number(l.latin_word_count||0),
+    numeric_token_count:Number(l.numeric_token_count||0),
+    text_role:l.text_role||"",
+    include_suggestion:l.include_suggestion||"",
+    qc_flag:l.qc_flag||"",
+    qc_reason:l.qc_reason||"",
+    in_main_window:l.in_main_window,
+    start_marker_line:l.start_marker_line||"",
+    end_marker_line:l.end_marker_line||""
+  }));
+  const lineHeaders=["doc_id","pdf_filename","document_title","page_number","global_line_number","extraction_method","raw_text","clean_text","analysis_text","char_count","cjk_char_count","word_count","numeric_token_count","text_role","include_suggestion","qc_flag","qc_reason","in_main_window","start_marker_line","end_marker_line"];
+  appendJsonSheet(wb,"All_Extracted_Lines",lineRows,lineHeaders,[20,34,34,10,14,16,80,80,80,10,12,10,16,22,18,14,34,14,16,16]);
+
+  const keptBlockIds=new Set(topicRows.map(r=>r.text_id));
+  const excludedLineRows=allLines.filter(l=>{
+    const role=String(l.text_role||"");
+    const maybeMain=(role==="main_text_candidate" && l.include_suggestion!=="exclude" && Number(l.in_main_window)!==0 && Number(l.char_count||0)>=Number(cfg.mainMinChars||40));
+    return !maybeMain || isObviousTopicNoiseText(l.analysis_text||l.clean_text||l.raw_text||"");
+  }).map(l=>{
+    const d=docMap.get(l.doc_id)||{};
+    const productSignal=/\b(hybrid|vehicle|engine|powertrain|fuel economy|electric|battery|motor|suv|sedan|pickup|interior|exterior)\b/i.test(l.analysis_text||"");
+    return {
+      unit_type:"line",
+      doc_id:l.doc_id||"",
+      pdf_filename:l.pdf_filename||"",
+      page_number:l.page_number||"",
+      line_or_block_id:l.global_line_number||"",
+      source_line_start:l.global_line_number||"",
+      source_line_end:l.global_line_number||"",
+      text:l.analysis_text||l.clean_text||l.raw_text||"",
+      char_count:Number(l.char_count||0),
+      text_role:l.text_role||"",
+      include_suggestion:l.include_suggestion||"",
+      exclusion_reason:l.qc_reason||"",
+      exclusion_rule:l.qc_flag||"",
+      in_main_window:l.in_main_window,
+      possible_false_exclusion:(productSignal && Number(l.char_count||0)>=40 && ["metadata","pre_main","table_like","footer"].includes(String(l.text_role||""))) ? 1 : 0,
+      start_marker_line:d.start_marker_line||"",
+      end_marker_line:d.end_marker_line||""
+    };
+  });
+  const excludedBlockRows=allBlocks.filter(b=>!keptBlockIds.has(b.block_id)).map(b=>{
+    const d=docMap.get(b.doc_id)||{};
+    const productSignal=/\b(hybrid|vehicle|engine|powertrain|fuel economy|electric|battery|motor|suv|sedan|pickup|interior|exterior)\b/i.test(b.analysis_text||"");
+    return {
+      unit_type:"block",
+      doc_id:b.doc_id||"",
+      pdf_filename:b.pdf_filename||"",
+      page_number:b.source_start_page||"",
+      line_or_block_id:b.block_id||"",
+      source_line_start:b.source_start_line||"",
+      source_line_end:b.source_end_line||"",
+      text:b.analysis_text||b.clean_text||b.raw_text||"",
+      char_count:Number(b.char_count||0),
+      text_role:b.text_role||"",
+      include_suggestion:b.include_suggestion||"",
+      exclusion_reason:b.qc_reason||"",
+      exclusion_rule:b.qc_flag||"",
+      in_main_window:"",
+      possible_false_exclusion:(productSignal && Number(b.char_count||0)>=80 && ["metadata","pre_main","table_like","footer"].includes(String(b.text_role||""))) ? 1 : 0,
+      start_marker_line:d.start_marker_line||"",
+      end_marker_line:d.end_marker_line||""
+    };
+  });
+  const excludedRows=[...excludedLineRows,...excludedBlockRows];
+  const excludedHeaders=["unit_type","doc_id","pdf_filename","page_number","line_or_block_id","source_line_start","source_line_end","text","char_count","text_role","include_suggestion","exclusion_reason","exclusion_rule","in_main_window","possible_false_exclusion","start_marker_line","end_marker_line"];
+  appendJsonSheet(wb,"Excluded_QC",excludedRows,excludedHeaders,[10,20,34,10,20,14,14,100,10,22,18,38,18,14,20,16,16]);
+
+  const topicByDoc=new Map();
+  for(const r of topicRows){
+    const a=topicByDoc.get(r.doc_id)||{rows:0,chars:0,mainRows:0,robustRows:0};
+    a.rows+=1; a.chars+=Number(r.char_count||0); a.mainRows+=Number(r.use_for_main_analysis||0); a.robustRows+=Number(r.use_for_robustness_check||0);
+    topicByDoc.set(r.doc_id,a);
+  }
+  const rawByDoc=new Map();
+  const noiseByDoc=new Map();
+  for(const l of allLines){
+    rawByDoc.set(l.doc_id,(rawByDoc.get(l.doc_id)||0)+Number(l.char_count||0));
+    if(["ad_or_sponsored","related_content","footer","navigation","noise","pre_main"].includes(String(l.text_role||"")) || isObviousTopicNoiseText(l.analysis_text||"")){
+      noiseByDoc.set(l.doc_id,(noiseByDoc.get(l.doc_id)||0)+1);
+    }
+  }
+  const lineCountByDoc=new Map();
+  for(const l of allLines) lineCountByDoc.set(l.doc_id,(lineCountByDoc.get(l.doc_id)||0)+1);
+
+  const docRows=allDocs.map(d=>{
+    const topic=topicByDoc.get(d.doc_id)||{rows:0,chars:0,mainRows:0,robustRows:0};
+    const rawChars=rawByDoc.get(d.doc_id)||Number(d.total_char_count||0)||0;
+    const lineCount=lineCountByDoc.get(d.doc_id)||Number(d.raw_line_count||0)||0;
+    const excludedChars=Math.max(rawChars-topic.chars,0);
+    const retention=rawChars?topic.chars/rawChars:0;
+    const noiseLines=noiseByDoc.get(d.doc_id)||0;
+    const lineNoiseRatio=lineCount?noiseLines/lineCount:0;
+    const warnings=[];
+    if(topic.rows===0) warnings.push("NO_TOPIC_ROWS");
+    if(rawChars>=1000 && retention<0.20) warnings.push("LOW_RETENTION");
+    if(lineNoiseRatio>0.45 || Number(d.noise_ratio||0)>0.45) warnings.push("HIGH_NOISE");
+    if(Number(d.ocr_page_count||0)>0) warnings.push("OCR_USED");
+    if(String(d.analysis_readiness||"").includes("REVIEW") || String(d.analysis_readiness||"")==="NOT_RECOMMENDED") warnings.push("NEEDS_REVIEW");
+    if(d.end_marker_line && rawChars>=1000 && retention<0.35) warnings.push("POSSIBLE_TRUNCATION");
+    const ready=(topic.rows>0 && topic.mainRows>0 && !warnings.includes("LOW_RETENTION") && !warnings.includes("HIGH_NOISE") && !warnings.includes("NO_TOPIC_ROWS")) ? 1 : 0;
+    return {
+      doc_id:d.doc_id||"",
+      pdf_filename:d.pdf_filename||"",
+      document_title:d.document_title||"",
+      page_count:d.page_count||"",
+      raw_line_count:lineCount,
+      block_count:d.block_count||0,
+      topic_input_rows:topic.rows,
+      main_analysis_rows:topic.mainRows,
+      robustness_rows:topic.robustRows,
+      raw_char_count:rawChars,
+      topic_input_char_count:topic.chars,
+      excluded_char_count:excludedChars,
+      retention_ratio:Number(retention.toFixed(4)),
+      noise_line_count:noiseLines,
+      noise_line_ratio:Number(lineNoiseRatio.toFixed(4)),
+      ocr_page_count:d.ocr_page_count||0,
+      pdf_text_page_count:d.pdf_text_page_count||0,
+      start_marker_line:d.start_marker_line||"",
+      end_marker_line:d.end_marker_line||"",
+      extraction_status:d.extraction_status||"",
+      analysis_readiness:d.analysis_readiness||"",
+      decision_reason:d.decision_reason||"",
+      main_analysis_ready:ready,
+      warning_flags:warnings.join(";")
+    };
+  });
+  const docHeaders=["doc_id","pdf_filename","document_title","page_count","raw_line_count","block_count","topic_input_rows","main_analysis_rows","robustness_rows","raw_char_count","topic_input_char_count","excluded_char_count","retention_ratio","noise_line_count","noise_line_ratio","ocr_page_count","pdf_text_page_count","start_marker_line","end_marker_line","extraction_status","analysis_readiness","decision_reason","main_analysis_ready","warning_flags"];
+  appendJsonSheet(wb,"Document_QC",docRows,docHeaders,[20,34,34,10,14,12,16,18,16,14,18,18,14,16,16,14,16,16,16,24,28,42,18,42]);
+
+  const arr=XLSX.write(wb,{bookType:"xlsx",type:"array"});
+  workbookBlob=new Blob([arr],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+  log(`  ── Excel ──`);
+  log(`  Topic_Model_Input rows: ${topicRows.length}`);
+  log(`  All_Extracted_Lines rows: ${lineRows.length}`);
+  log(`  Excluded_QC rows: ${excludedRows.length}`);
+  log(`  Document_QC rows: ${docRows.length}`);
+}
+
+function render(){
+  const tb=$("docTable").querySelector("tbody"); tb.innerHTML="";
+  for(const d of allDocs){
+    const tr=document.createElement("tr");
+    tr.innerHTML=`<td>${esc(d.pdf_filename)}</td><td>${d.page_count}</td><td>${d.raw_line_count}</td><td>${d.block_count}</td><td>${d.main_candidate_count}</td><td>${d.ocr_page_count}</td><td>${Number(d.noise_ratio||0).toFixed(2)}</td><td><span class="pill ${esc(d.extraction_status)}">${esc(d.extraction_status)}</span></td><td><span class="pill ${esc(d.analysis_readiness)}">${esc(d.analysis_readiness)}</span></td><td>${esc(d.decision_reason)}</td>`;
+    tb.appendChild(tr);
+  }
+  const mt=$("mainTable").querySelector("tbody"); mt.innerHTML="";
+  for(const r of allMain.filter(r=>{
+    const role=String(r.text_role||"");
+    const text=String(r.analysis_text||"");
+    const bad=/\b(?:jpg|jpeg|png|gif|webp)\b/i.test(text)||/launch gallery|click above|image gallery/i.test(text);
+    return !["ad_or_sponsored","related_content","footer","navigation","noise","pre_main","table_like","short_fragment"].includes(role)
+      && Number(r.char_count||0)>=Number(cfgFromUI().mainMinChars||40) && !bad;
+  }).slice(0,30)){
+    const tr=document.createElement("tr");
+    tr.innerHTML=`<td>${esc(r.pdf_filename)}</td><td>${r.source_start_page}</td><td><span class="pill ${esc(r.text_role)}">${esc(r.text_role)}</span></td><td>${r.char_count}</td><td>${esc(r.analysis_text.slice(0,380))}${r.analysis_text.length>380?"...":""}</td>`;
+    mt.appendChild(tr);
+  }
+  // Update debug panel
+  if(debugLines.length>0){
+    const db=$("debugBox");
+    db.textContent=debugLines.join("\n\n");
+    db.classList.remove("debug-hidden");
+  }
+}
+
+$("runBtn").addEventListener("click", async()=>{
+  reset(); $("status").textContent="開始處理...";
+  const files=Array.from($("pdfFiles").files||[]);
+  if(!files.length){log("請先選擇 PDF。");return;}
+  const cfg=cfgFromUI();
+  $("runBtn").disabled=true;
+  try{
+    for(let i=0;i<files.length;i++){
+      const file=files[i]; log(`[${i+1}/${files.length}] ${file.name}`);
+      try{
+        const r=await processFile(file,cfg);
+        allDocs.push(r.docIndex); allLines.push(...r.fileLines); allBlocks.push(...r.blocks); allMain.push(...r.main); allStrictMain.push(...r.strictMain); allNoise.push(...r.noise); allMeta.push(...r.metaRows); allPageQC.push(...r.pageQC); allDocQC.push(r.docIndex);
+        log(`  → Lines ${r.docIndex.raw_line_count}；Blocks ${r.docIndex.block_count}；Main ${r.docIndex.main_candidate_count}；OCR頁 ${r.docIndex.ocr_page_count}；${r.docIndex.extraction_status} / ${r.docIndex.analysis_readiness}`);
+      }catch(e){
+        log(`  !! 失敗：${file.name}：${e.message}`);
+        console.error(e);
+        const d=meta(file.name);
+        const fail={doc_id:d.doc_id,pdf_filename:file.name,document_title:d.document_title,page_count:"",raw_line_count:0,block_count:0,main_candidate_count:0,strict_main_candidate_count:0,noise_candidate_count:0,metadata_candidate_count:0,pdf_text_page_count:0,ocr_page_count:0,total_char_count:0,total_cjk_char_count:0,avg_chars_per_block:0,noise_ratio:0,short_fragment_ratio:0,table_like_ratio:0,extraction_status:"REPROCESS_RECOMMENDED",analysis_readiness:"NOT_RECOMMENDED",decision_reason:e.message};
+        allDocs.push(fail); allDocQC.push(fail);
+      }
+    }
+    makeWorkbook(); render(); $("downloadBtn").disabled=false; log("完成。可下載 Excel。");
+  }finally{$("runBtn").disabled=false;}
+});
+$("downloadBtn").addEventListener("click",()=>{
+  if(!workbookBlob)return;
+  const a=document.createElement("a");
+  const url=URL.createObjectURL(workbookBlob);
+  a.href=url; a.download=$("outName").value||"PDF_topic_model_input_v5_19_research_QC.xlsx";
+  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+});
+</script>
+</body>
+</html>
